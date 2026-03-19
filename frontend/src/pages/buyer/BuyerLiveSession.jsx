@@ -10,13 +10,6 @@ import api from '../../api'
 const SOCKET_URL  = import.meta.env.VITE_SOCKET_URL  || 'http://localhost:5000'
 const AGORA_APP_ID = import.meta.env.VITE_AGORA_APP_ID || ''
 
-const normalize = p => ({
-  ...p,
-  image: p.image_url || p.image,
-  originalPrice: p.original_price || p.originalPrice,
-  colors: typeof p.colors === 'string' ? JSON.parse(p.colors || '[]') : (p.colors || []),
-})
-
 // ── Sessions list card ──────────────────────────────────────────────
 function SessionCard({ session, onJoin }) {
   return (
@@ -113,11 +106,16 @@ export default function BuyerLiveSession() {
     socket.on('message_history', msgs => setMessages(msgs))
     socket.on('new_message',     msg  => setMessages(prev => [...prev, msg]))
     socket.on('viewer_count',    n    => setViewerCount(n))
+    socket.on('live_session_ended', () => {
+      alert('The seller has ended this live session.')
+      leaveSession()
+    })
+
     socket.on('user_joined', ({ userName }) =>
       setMessages(prev => [...prev, { id: Date.now(), system: true, text: `${userName} joined`, time: new Date().toISOString() }])
     )
     socket.on('product_showcased', product => {
-      setShowcasedProduct(normalize(product))
+      setShowcasedProduct(product)
       setTimeout(() => setShowcasedProduct(null), 8000)
     })
 

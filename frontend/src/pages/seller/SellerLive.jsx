@@ -58,6 +58,14 @@ export default function SellerLive() {
         userName:  user?.name,
         role:      'seller',
       })
+      // Notify all buyers that live has started
+      socket.emit('notify_live_started', {
+        sellerId: user?.id,
+        sellerName: user?.name,
+        title: title.trim(),
+        sessionId: String(data.sessionId),
+      })
+
       socket.on('new_message', msg => setMessages(prev => [...prev, msg]))
       socket.on('viewer_count', n  => setViewerCount(n))
       socket.on('user_joined', ({ userName }) =>
@@ -102,6 +110,7 @@ export default function SellerLive() {
     // End in DB
     if (sessionId) await api.post(`/live/end/${sessionId}`).catch(() => {})
     // Socket
+    socketRef.current?.emit('seller_ended_live', { sessionId: String(sessionId) })
     socketRef.current?.emit('leave_session', { sessionId: String(sessionId), userName: user?.name })
     socketRef.current?.disconnect()
     // Agora cleanup

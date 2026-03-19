@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { ShoppingBag, Home, Grid, Sparkles, Video, ShoppingCart, ClipboardList, LogOut, Menu, X, User, Bell } from 'lucide-react'
+import { ShoppingBag, Home, Grid, Sparkles, Video, ShoppingCart, ClipboardList, LogOut, Menu, X, User } from 'lucide-react'
+import NotificationBell from '../ui/NotificationBell'
 import { useAuth } from '../../context/AuthContext'
 import { useCart } from '../../context/CartContext'
 
@@ -96,9 +97,7 @@ export default function BuyerLayout() {
             <Menu size={20}/>
           </button>
           <div className="flex items-center gap-2 ml-auto">
-            <button className="relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl">
-              <Bell size={18}/>
-            </button>
+            <NotificationBell/>
             <NavLink to="/buyer/cart" className="relative p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-xl">
               <ShoppingCart size={18}/>
               {count > 0 && <span className="absolute top-1 right-1 w-4 h-4 bg-brand-500 text-white text-xs rounded-full flex items-center justify-center font-bold">{count > 9 ? '9+' : count}</span>}

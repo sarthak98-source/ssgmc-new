@@ -10,6 +10,8 @@ const productRoutes  = require('./routes/products')
 const orderRoutes    = require('./routes/orders')
 const userRoutes     = require('./routes/users')
 const liveRoutes     = require('./routes/live')
+const videoCallRoutes  = require('./routes/videocalls')
+const notificationRoutes = require('./routes/notifications')
 
 // Database
 const { getPool } = require('./config/db')
@@ -65,6 +67,25 @@ io.on('connection', (socket) => {
     console.log(`${userName} joined session ${sessionId}`)
   })
 
+  /* ── Live started notification ── */
+  socket.on('notify_live_started', async ({ sellerId, sellerName, title, sessionId }) => {
+    try {
+      const { notify } = require('./utils/notify')
+      const { getPool } = require('./config/db')
+      const pool = getPool()
+      // Notify all buyers about live session
+      const [buyers] = await pool.execute("SELECT id FROM users WHERE role = 'buyer' AND status = 'active'")
+      for (const buyer of buyers) {
+        await notify(buyer.id, 'live_started', `${sellerName} is LIVE!`,
+          `${sellerName} started a live session: "${title}". Join now!`,
+          { sessionId, sellerId }
+        )
+      }
+      // Push real-time to all connected clients
+      io.emit('live_session_started', { sellerId, sellerName, title, sessionId })
+    } catch(e) { console.warn('live notify error:', e.message) }
+  })
+
   /* ── Send a chat message ── */
   socket.on('send_message', ({ sessionId, userId, userName, role, text }) => {
     const msg = {
@@ -100,6 +121,63 @@ io.on('connection', (socket) => {
     }
   })
 
+  /* ── 1-to-1 Video Call Signaling ── */
+  // Notify seller of new call request
+  socket.on('call_request', ({ sellerId, requestId, buyerName, productName }) => {
+    io.to(`seller_${sellerId}`).emit('incoming_call', { requestId, buyerName, productName })
+  })
+
+  // User joins their personal notification room
+  socket.on('join_user_room', ({ userId }) => {
+    socket.join(`user_${userId}`)
+  })
+
+  // Seller joins their notification room
+  socket.on('join_seller_room', ({ sellerId }) => {
+    socket.join(`seller_${sellerId}`)
+    console.log(`Seller ${sellerId} joined notification room`)
+  })
+
+  // Seller accepts — notify buyer
+  socket.on('call_accepted', ({ roomId, buyerId, requestId }) => {
+    io.to(`buyer_${buyerId}`).emit('call_accepted', { roomId, requestId })
+  })
+
+  // Seller rejects — notify buyer
+  socket.on('call_rejected', ({ buyerId, requestId }) => {
+    io.to(`buyer_${buyerId}`).emit('call_rejected', { requestId })
+  })
+
+  // Buyer joins their notification room
+  socket.on('join_buyer_room', ({ buyerId }) => {
+    socket.join(`buyer_${buyerId}`)
+  })
+
+  // 1-to-1 call: join private room for isolated chat
+  socket.on('join_call_room', ({ roomId }) => {
+    socket.join(`call_room_${roomId}`)
+  })
+  socket.on('leave_call_room', ({ roomId }) => {
+    socket.leave(`call_room_${roomId}`)
+  })
+
+  // 1-to-1 call chat — ONLY sends to call_room participants, not broadcast
+  socket.on('call_chat_send', ({ roomId, msg }) => {
+    // Send to the private call room only (excludes sender)
+    socket.to(`call_room_${roomId}`).emit('call_chat_message', msg)
+  })
+
+  // Either party ends the 1-to-1 call
+  socket.on('end_call', ({ roomId, buyerId, sellerId }) => {
+    io.to(`buyer_${buyerId}`).emit('call_ended', { roomId })
+    io.to(`seller_${sellerId}`).emit('call_ended', { roomId })
+  })
+
+  // Live session: when seller leaves, end session for all buyers
+  socket.on('seller_ended_live', ({ sessionId }) => {
+    io.to(sessionId).emit('live_session_ended', { sessionId })
+  })
+
   /* ── Disconnect ── */
   socket.on('disconnect', () => {
     Object.keys(sessions).forEach(sessionId => {
@@ -115,6 +193,7 @@ io.on('connection', (socket) => {
 /* ─────────────────────────────────────────────────────────────
    Middleware
 ───────────────────────────────────────────────────────────── */
+app.set('io', io)
 app.use(cors({
   origin:      process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true,
@@ -138,6 +217,8 @@ app.use('/api/products', productRoutes)
 app.use('/api/orders',   orderRoutes)
 app.use('/api/users',    userRoutes)
 app.use('/api/live',     liveRoutes)
+app.use('/api/videocalls',    videoCallRoutes)
+app.use('/api/notifications', notificationRoutes)
 
 /* ─── Health check ─────────────────────────────────────────── */
 app.get('/api/health', (_req, res) =>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Package, Video, ClipboardList, LogOut, Menu, ShoppingBag, Bell } from 'lucide-react'
+import { LayoutDashboard, Package, Video, ClipboardList, LogOut, Menu, ShoppingBag, Phone } from 'lucide-react'
+import NotificationBell from '../ui/NotificationBell'
 import { useAuth } from '../../context/AuthContext'
 
 const navItems = [
@@ -8,6 +9,7 @@ const navItems = [
   { to:'/seller/products', icon:Package,         label:'My Products' },
   { to:'/seller/live',     icon:Video,           label:'Go Live' },
   { to:'/seller/orders',   icon:ClipboardList,   label:'Orders' },
+  { to:'/seller/calls',    icon:Phone,           label:'Call Requests' },
 ]
 
 export default function SellerLayout() {
@@ -75,7 +77,7 @@ export default function SellerLayout() {
         <header className="h-14 bg-white border-b border-gray-100 flex items-center justify-between px-4 flex-shrink-0">
           <button onClick={() => setMobileOpen(true)} className="lg:hidden p-2 -ml-2 text-gray-500"><Menu size={20}/></button>
           <div className="ml-auto flex items-center gap-2">
-            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl"><Bell size={18}/></button>
+            <NotificationBell/>
           </div>
         </header>
         <main className="flex-1 overflow-y-auto">

@@ -25,6 +25,7 @@ import SellerDashboard  from './pages/seller/SellerDashboard'
 import SellerProducts   from './pages/seller/SellerProducts'
 import SellerLive       from './pages/seller/SellerLive'
 import SellerOrders     from './pages/seller/SellerOrders'
+import SellerCallRequests from './pages/seller/SellerCallRequests'
 
 // Admin pages
 import AdminLayout      from './components/layout/AdminLayout'
@@ -54,15 +55,15 @@ const RequireAuth = ({ children, allowedRoles }) => {
 }
 
 const AppRoutes = () => {
-  const { user, isAuthenticated } = useAuth()
+  const { user, isAuthenticated, loading } = useAuth()
 
   return (
     <Routes>
       {/* Public */}
       <Route path="/"         element={<LandingPage/>}/>
-      <Route path="/login"    element={isAuthenticated
+      <Route path="/login"    element={loading ? <Loader/> : isAuthenticated
         ? <Navigate to={`/${user?.role}`} replace/> : <LoginPage/>}/>
-      <Route path="/register" element={isAuthenticated
+      <Route path="/register" element={loading ? <Loader/> : isAuthenticated
         ? <Navigate to={`/${user?.role}`} replace/> : <RegisterPage/>}/>
 
       {/* Buyer */}
@@ -83,6 +84,7 @@ const AppRoutes = () => {
         <Route path="products"   element={<SellerProducts/>}/>
         <Route path="live"       element={<SellerLive/>}/>
         <Route path="orders"     element={<SellerOrders/>}/>
+        <Route path="calls"      element={<SellerCallRequests/>}/>
       </Route>
 
       {/* Admin */}

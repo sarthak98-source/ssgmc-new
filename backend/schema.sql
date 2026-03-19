@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   password     VARCHAR(255) NOT NULL,
   role         ENUM('buyer','seller','admin') NOT NULL DEFAULT 'buyer',
   phone        VARCHAR(20),
-  avatar_url   VARCHAR(500),
+  avatar_url   MEDIUMTEXT   ,
   status       ENUM('active','pending','suspended') NOT NULL DEFAULT 'active',
   last_login   DATETIME,
   created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS products (
   price          DECIMAL(12,2) NOT NULL,
   original_price DECIMAL(12,2),
   description    TEXT,
-  image_url      VARCHAR(500),
-  model_url      VARCHAR(500),
+  image_url      MEDIUMTEXT  ,
+  model_url      MEDIUMTEXT  ,
   badge          VARCHAR(50),
   rating         DECIMAL(3,1)  DEFAULT 0.0,
   review_count   INT           DEFAULT 0,
@@ -140,4 +140,24 @@ INSERT IGNORE INTO users (name, email, password, role, status) VALUES
 ('Demo Seller',  'seller@vivmart.com', '$2a$12$LiGRNfMaFHX1I5z.JyRK.OKC4lHzl1UdG3F2M0Hs6VpXQ0VWGKN22', 'seller', 'active'),
 ('Demo Buyer',   'buyer@vivmart.com',  '$2a$12$LiGRNfMaFHX1I5z.JyRK.OKC4lHzl1UdG3F2M0Hs6VpXQ0VWGKN22', 'buyer',  'active');
 
--- Seed products (seller_id=2 = Demo Seller)
+-- No demo products seeded — sellers add their own products via the dashboard
+
+-- ── Video Call Requests (buyer → seller 1-to-1) ───────────────────
+CREATE TABLE IF NOT EXISTS video_call_requests (
+  id           INT          AUTO_INCREMENT PRIMARY KEY,
+  buyer_id     INT          NOT NULL,
+  seller_id    INT          NOT NULL,
+  product_id   INT,
+  buyer_name   VARCHAR(100) NOT NULL,
+  product_name VARCHAR(200),
+  message      TEXT,
+  status       ENUM('pending','accepted','rejected','ended') DEFAULT 'pending',
+  room_id      VARCHAR(100),
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_seller (seller_id),
+  INDEX idx_buyer  (buyer_id),
+  INDEX idx_status (status),
+  FOREIGN KEY (buyer_id)  REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (seller_id) REFERENCES users(id) ON DELETE CASCADE
+);

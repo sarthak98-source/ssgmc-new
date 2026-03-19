@@ -1,20 +1,35 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ShoppingCart, Sparkles, Star, ArrowLeft, Package, Truck, Shield, Heart, Share2 } from 'lucide-react'
+import { ShoppingCart, Sparkles, Star, ArrowLeft, Package, Truck, Shield, Heart, Video, X, Phone } from 'lucide-react'
 import { useCart } from '../../context/CartContext'
+import { useAuth } from '../../context/AuthContext'
+import { io } from 'socket.io-client'
 import api from '../../api'
+import VideoCallModal from '../../components/videocall/VideoCallModal'
+
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000'
 
 export default function BuyerProductDetail() {
   const { id } = useParams()
   const { addItem } = useCart()
-  const [product, setProduct] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const { user } = useAuth()
+  const [product, setProduct]           = useState(null)
+  const [loading, setLoading]           = useState(true)
   const [selectedColor, setSelectedColor] = useState(null)
-  const [selectedSize, setSelectedSize] = useState(null)
-  const [qty, setQty] = useState(1)
-  const [added, setAdded] = useState(false)
+  const [selectedSize, setSelectedSize]   = useState(null)
+  const [qty, setQty]       = useState(1)
+  const [added, setAdded]   = useState(false)
   const [wished, setWished] = useState(false)
-  const [relatedProducts, setRelatedProducts] = useState([])
+  const [related, setRelated] = useState([])
+
+  // Video call states
+  const [callStatus, setCallStatus]   = useState(null) // null | 'requesting' | 'waiting' | 'active' | 'rejected'
+  const [callRequestId, setCallRequestId] = useState(null)
+  const [activeRoomId, setActiveRoomId]   = useState(null)
+  const [callMessage, setCallMessage]     = useState('')
+  const [showCallModal, setShowCallModal] = useState(false)
+  const socketRef = useRef(null)
+  const pollRef   = useRef(null)
 
   useEffect(() => {
     setLoading(true)
@@ -24,18 +39,99 @@ export default function BuyerProductDetail() {
         setProduct(p)
         setSelectedColor(p.colors?.[0] || null)
         setSelectedSize(p.sizes?.[0] || null)
-        // Fetch related
         return api.get(`/products?category=${p.category}&limit=4`)
       })
-      .then(r => setRelatedProducts((r.data.products || []).filter(p => p.id !== parseInt(id))))
+      .then(r => setRelated((r.data.products || []).filter(p => p.id !== parseInt(id))))
       .catch(() => setProduct(null))
       .finally(() => setLoading(false))
   }, [id])
 
-  const handleAdd = () => {
-    addItem(product, qty, { color: selectedColor, size: selectedSize })
-    setAdded(true)
-    setTimeout(() => setAdded(false), 2000)
+  // Socket setup for call notifications
+  useEffect(() => {
+    if (!user) return
+    const socket = io(SOCKET_URL, { transports:['websocket','polling'] })
+    socketRef.current = socket
+    socket.emit('join_buyer_room', { buyerId: user.id })
+    socket.on('call_accepted', ({ roomId, requestId }) => {
+      setCallStatus('active')
+      setActiveRoomId(roomId)
+      setShowCallModal(true)
+      clearInterval(pollRef.current)
+      // Join private call room for isolated chat
+      socket.emit('join_call_room', { roomId })
+    })
+    socket.on('call_rejected', () => {
+      setCallStatus('rejected')
+      clearInterval(pollRef.current)
+      setTimeout(() => setCallStatus(null), 3000)
+    })
+    socket.on('call_ended', () => {
+      setShowCallModal(false)
+      setCallStatus(null)
+      setActiveRoomId(null)
+    })
+    return () => { socket.disconnect(); clearInterval(pollRef.current) }
+  }, [user])
+
+  const requestCall = async () => {
+    if (!product?.seller_id) return
+    setCallStatus('requesting')
+    try {
+      const { data } = await api.post('/videocalls/request', {
+        sellerId: product.seller_id,
+        productId: product.id,
+        productName: product.name,
+        message: callMessage || `I want to ask about ${product.name}`,
+      })
+      if (data.success) {
+        setCallRequestId(data.requestId)
+        setCallStatus('waiting')
+        // Notify seller via socket
+        socketRef.current?.emit('call_request', {
+          sellerId:    product.seller_id,
+          requestId:   data.requestId,
+          buyerName:   user?.name,
+          productName: product.name,
+        })
+        // Poll for status
+        pollRef.current = setInterval(async () => {
+          try {
+            const r = await api.get(`/videocalls/status/${data.requestId}`)
+            if (r.data.request.status === 'accepted') {
+              setCallStatus('active')
+              setActiveRoomId(r.data.request.room_id)
+              setShowCallModal(true)
+              clearInterval(pollRef.current)
+            } else if (r.data.request.status === 'rejected') {
+              setCallStatus('rejected')
+              clearInterval(pollRef.current)
+              setTimeout(() => setCallStatus(null), 3000)
+            }
+          } catch {}
+        }, 3000)
+      }
+    } catch (err) {
+      setCallStatus(null)
+      alert(err?.response?.data?.message || 'Failed to send request')
+    }
+  }
+
+  const endCall = async () => {
+    if (callRequestId) await api.put(`/videocalls/${callRequestId}/end`).catch(()=>{})
+    socketRef.current?.emit('end_call', {
+      roomId:   activeRoomId,
+      buyerId:  user?.id,
+      sellerId: product?.seller_id,
+    })
+    setShowCallModal(false)
+    setCallStatus(null)
+    setActiveRoomId(null)
+  }
+
+  const cancelRequest = () => {
+    clearInterval(pollRef.current)
+    setCallStatus(null)
+    setCallRequestId(null)
   }
 
   const discount = product?.original_price ? Math.round((1 - product.price / product.original_price) * 100) : null
@@ -45,7 +141,7 @@ export default function BuyerProductDetail() {
       <div className="h-6 bg-gray-200 rounded w-32"/>
       <div className="grid md:grid-cols-2 gap-8">
         <div className="aspect-square bg-gray-200 rounded-2xl"/>
-        <div className="space-y-4"><div className="h-8 bg-gray-200 rounded w-3/4"/><div className="h-5 bg-gray-200 rounded w-1/2"/></div>
+        <div className="space-y-4"><div className="h-8 bg-gray-200 rounded w-3/4"/></div>
       </div>
     </div>
   )
@@ -59,143 +155,198 @@ export default function BuyerProductDetail() {
   )
 
   return (
-    <div className="space-y-8">
-      <Link to="/buyer/products" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-brand-600 transition-colors">
-        <ArrowLeft size={16}/> Back to Products
-      </Link>
+    <>
+      {/* 1-to-1 Video Call Modal */}
+      {showCallModal && activeRoomId && (
+        <VideoCallModal
+          roomId={activeRoomId}
+          localUser={user}
+          remoteUserName={product.seller_name}
+          onEnd={endCall}
+          socketRef={socketRef}
+        />
+      )}
 
-      <div className="grid md:grid-cols-2 gap-8">
-        {/* Image */}
-        <div className="space-y-3">
-          <div className="relative rounded-2xl overflow-hidden aspect-square bg-gray-100">
-            <img src={product.image_url || product.image} alt={product.name} className="w-full h-full object-cover"/>
-            <div className="absolute top-3 left-3 flex flex-col gap-2">
-              {discount && <span className="badge bg-brand-500 text-white">-{discount}%</span>}
-              {product.badge && <span className="badge-orange">{product.badge}</span>}
+      <div className="space-y-8">
+        <Link to="/buyer/products" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-brand-600">
+          <ArrowLeft size={16}/> Back to Products
+        </Link>
+
+        <div className="grid md:grid-cols-2 gap-8">
+          {/* Image */}
+          <div className="space-y-3">
+            <div className="relative rounded-2xl overflow-hidden aspect-square bg-gray-100">
+              {product.image_url ? (
+                <img src={product.image_url} alt={product.name} className="w-full h-full object-cover"/>
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-6xl">🛍️</div>
+              )}
+              <div className="absolute top-3 left-3 flex flex-col gap-2">
+                {discount > 0 && <span className="badge bg-brand-500 text-white">-{discount}%</span>}
+                {product.badge && <span className="badge-orange">{product.badge}</span>}
+              </div>
+              <button onClick={() => setWished(v=>!v)} className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white shadow-md flex items-center justify-center">
+                <Heart size={16} className={wished ? 'fill-red-500 text-red-500' : 'text-gray-400'}/>
+              </button>
             </div>
-            <button onClick={() => setWished(v=>!v)} className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white shadow-md flex items-center justify-center hover:scale-110 transition-transform">
-              <Heart size={16} className={wished ? 'fill-red-500 text-red-500' : 'text-gray-400'}/>
-            </button>
+            <Link to={`/buyer/ar/${product.id}`} className="w-full btn-secondary justify-center py-3 text-base font-bold gap-2">
+              <Sparkles size={18} className="text-brand-500"/> Try with AR
+              <span className="badge-orange text-xs">{product.ar_mode?.toUpperCase()}</span>
+            </Link>
           </div>
 
-          {/* AR Try-On button */}
-          <Link to={`/buyer/ar/${product.id}`}
-            className="w-full btn-secondary justify-center py-3 text-base font-bold gap-2">
-            <Sparkles size={18} className="text-brand-500"/>
-            Try with AR
-            <span className="badge-orange text-xs">{product.ar_mode?.toUpperCase()}</span>
-          </Link>
-        </div>
-
-        {/* Details */}
-        <div className="space-y-5">
-          <div>
-            <p className="text-sm text-gray-400 capitalize mb-1">{product.category} · by {product.seller_name}</p>
-            <h1 className="font-display text-2xl font-bold text-gray-900 mb-2">{product.name}</h1>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1">
+          {/* Details */}
+          <div className="space-y-5">
+            <div>
+              <p className="text-sm text-gray-400 capitalize mb-1">{product.category} · by {product.seller_name}</p>
+              <h1 className="font-display text-2xl font-bold text-gray-900 mb-2">{product.name}</h1>
+              <div className="flex items-center gap-2">
                 {[...Array(5)].map((_,i) => (
-                  <Star key={i} size={14} className={i < Math.floor(product.rating) ? 'fill-amber-400 text-amber-400' : 'text-gray-300'}/>
+                  <Star key={i} size={14} className={i < Math.floor(product.rating||0) ? 'fill-amber-400 text-amber-400' : 'text-gray-300'}/>
                 ))}
-              </div>
-              <span className="text-sm font-semibold text-gray-700">{product.rating}</span>
-              <span className="text-sm text-gray-400">({product.review_count} reviews)</span>
-            </div>
-          </div>
-
-          {/* Price */}
-          <div className="flex items-baseline gap-3">
-            <span className="font-display text-3xl font-bold text-gray-900">₹{product.price?.toLocaleString('en-IN')}</span>
-            {product.original_price && <span className="text-lg text-gray-400 line-through">₹{product.original_price?.toLocaleString('en-IN')}</span>}
-            {discount && <span className="badge bg-green-100 text-green-700">{discount}% OFF</span>}
-          </div>
-
-          {/* Colors */}
-          {product.colors?.length > 0 && (
-            <div>
-              <p className="label">Color</p>
-              <div className="flex gap-2 flex-wrap">
-                {product.colors.map(c => (
-                  <button key={c} onClick={() => setSelectedColor(c)}
-                    style={{ backgroundColor: c }}
-                    className={`w-8 h-8 rounded-full border-2 transition-all ${selectedColor===c ? 'border-brand-500 scale-110 shadow-md' : 'border-gray-200 hover:scale-105'}`}/>
-                ))}
+                <span className="text-sm font-semibold text-gray-700">{product.rating||0}</span>
+                <span className="text-sm text-gray-400">({product.review_count||0} reviews)</span>
               </div>
             </div>
-          )}
 
-          {/* Sizes */}
-          {product.sizes?.length > 0 && (
-            <div>
-              <p className="label">Size</p>
-              <div className="flex gap-2 flex-wrap">
-                {product.sizes.map(s => (
-                  <button key={s} onClick={() => setSelectedSize(s)}
-                    className={`px-3 py-1.5 rounded-xl text-sm font-semibold border transition-all ${selectedSize===s ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
-                    {s}
+            <div className="flex items-baseline gap-3">
+              <span className="font-display text-3xl font-bold text-gray-900">₹{Number(product.price).toLocaleString('en-IN')}</span>
+              {product.original_price && <span className="text-lg text-gray-400 line-through">₹{Number(product.original_price).toLocaleString('en-IN')}</span>}
+              {discount > 0 && <span className="badge bg-green-100 text-green-700">{discount}% OFF</span>}
+            </div>
+
+            {product.colors?.length > 0 && (
+              <div>
+                <p className="label">Color</p>
+                <div className="flex gap-2 flex-wrap">
+                  {product.colors.map(c => (
+                    <button key={c} onClick={() => setSelectedColor(c)} style={{backgroundColor:c}}
+                      className={`w-8 h-8 rounded-full border-2 transition-all ${selectedColor===c?'border-brand-500 scale-110 shadow-md':'border-gray-200'}`}/>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {product.sizes?.length > 0 && (
+              <div>
+                <p className="label">Size</p>
+                <div className="flex gap-2 flex-wrap">
+                  {product.sizes.map(s => (
+                    <button key={s} onClick={() => setSelectedSize(s)}
+                      className={`px-3 py-1.5 rounded-xl text-sm font-semibold border transition-all ${selectedSize===s?'border-brand-500 bg-brand-50 text-brand-700':'border-gray-200 text-gray-600'}`}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3">
+              <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden">
+                <button onClick={() => setQty(q=>Math.max(1,q-1))} className="px-3 py-2.5 hover:bg-gray-50 font-bold">−</button>
+                <span className="px-4 py-2.5 text-sm font-semibold">{qty}</span>
+                <button onClick={() => setQty(q=>q+1)} className="px-3 py-2.5 hover:bg-gray-50 font-bold">+</button>
+              </div>
+              <button onClick={() => { addItem(product, qty, {color:selectedColor, size:selectedSize}); setAdded(true); setTimeout(()=>setAdded(false),2000) }}
+                className={`flex-1 btn-primary justify-center py-3 text-base transition-all ${added?'bg-green-500 hover:bg-green-500':''}`}>
+                <ShoppingCart size={18}/> {added ? '✓ Added!' : 'Add to Cart'}
+              </button>
+            </div>
+
+            {/* ── Video Call Request Button ── */}
+            <div className="border border-gray-200 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Video size={16} className="text-brand-500"/>
+                <p className="font-semibold text-gray-800 text-sm">Ask the Seller via Video Call</p>
+              </div>
+              <p className="text-xs text-gray-500">Request a live 1-to-1 video call with the seller to ask questions about this product.</p>
+
+              {callStatus === null && (
+                <>
+                  <input className="input text-sm" placeholder="Optional: what do you want to ask?"
+                    value={callMessage} onChange={e => setCallMessage(e.target.value)}/>
+                  <button onClick={requestCall}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-xl text-sm transition-all">
+                    <Phone size={14}/> Request Video Call
                   </button>
-                ))}
-              </div>
+                </>
+              )}
+
+              {callStatus === 'requesting' && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <span className="w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"/>
+                  Sending request...
+                </div>
+              )}
+
+              {callStatus === 'waiting' && (
+                <div className="flex items-center justify-between p-3 bg-yellow-50 rounded-xl border border-yellow-200">
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse"/>
+                    <span className="text-sm font-semibold text-yellow-700">Waiting for seller to accept...</span>
+                  </div>
+                  <button onClick={cancelRequest} className="text-xs text-red-500 hover:underline flex items-center gap-1">
+                    <X size={12}/> Cancel
+                  </button>
+                </div>
+              )}
+
+              {callStatus === 'rejected' && (
+                <div className="p-3 bg-red-50 rounded-xl border border-red-200 text-sm text-red-600 font-semibold text-center">
+                  ✗ Seller declined the call
+                </div>
+              )}
+
+              {callStatus === 'active' && (
+                <div className="p-3 bg-green-50 rounded-xl border border-green-200 text-sm text-green-700 font-semibold text-center">
+                  ✓ Call in progress — check video window
+                </div>
+              )}
             </div>
-          )}
 
-          {/* Qty + Cart */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden">
-              <button onClick={() => setQty(q => Math.max(1, q-1))} className="px-3 py-2.5 text-gray-500 hover:bg-gray-50 font-bold">−</button>
-              <span className="px-4 py-2.5 text-sm font-semibold">{qty}</span>
-              <button onClick={() => setQty(q => q+1)} className="px-3 py-2.5 text-gray-500 hover:bg-gray-50 font-bold">+</button>
+            {product.description && (
+              <p className="text-sm text-gray-600 leading-relaxed border-t border-gray-100 pt-4">{product.description}</p>
+            )}
+
+            <div className="grid grid-cols-3 gap-3 pt-2">
+              {[
+                { icon:Package, label:'Free Delivery', sub:'Over ₹999' },
+                { icon:Truck,   label:'Fast Shipping', sub:'2-3 days' },
+                { icon:Shield,  label:'Secure Payment', sub:'Protected' },
+              ].map(b => (
+                <div key={b.label} className="text-center p-3 bg-gray-50 rounded-xl">
+                  <b.icon size={16} className="mx-auto mb-1 text-brand-500"/>
+                  <p className="text-xs font-semibold text-gray-700">{b.label}</p>
+                  <p className="text-xs text-gray-400">{b.sub}</p>
+                </div>
+              ))}
             </div>
-            <button onClick={handleAdd} className={`flex-1 btn-primary justify-center py-3 text-base transition-all ${added ? 'bg-green-500 hover:bg-green-500' : ''}`}>
-              <ShoppingCart size={18}/>
-              {added ? '✓ Added to Cart!' : 'Add to Cart'}
-            </button>
-          </div>
-
-          {product.description && (
-            <p className="text-sm text-gray-600 leading-relaxed border-t border-gray-100 pt-4">{product.description}</p>
-          )}
-
-          {/* Trust badges */}
-          <div className="grid grid-cols-3 gap-3 pt-2">
-            {[
-              { icon:Package,  label:'Free Delivery', sub:'Orders over ₹999' },
-              { icon:Truck,    label:'Fast Shipping',  sub:'2-3 business days' },
-              { icon:Shield,   label:'Secure Payment', sub:'100% protected' },
-            ].map(b => (
-              <div key={b.label} className="text-center p-3 bg-gray-50 rounded-xl">
-                <b.icon size={16} className="mx-auto mb-1 text-brand-500"/>
-                <p className="text-xs font-semibold text-gray-700">{b.label}</p>
-                <p className="text-xs text-gray-400">{b.sub}</p>
-              </div>
-            ))}
           </div>
         </div>
-      </div>
 
-      {/* Related products */}
-      {relatedProducts.length > 0 && (
-        <div>
-          <h2 className="font-display text-lg font-bold text-gray-900 mb-4">Related Products</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {relatedProducts.slice(0,4).map(p => {
-              const np = p
-              return (
-                <Link key={np.id} to={`/buyer/products/${np.id}`}
-                  className="card-hover overflow-hidden">
+        {/* Related products */}
+        {related.length > 0 && (
+          <div>
+            <h2 className="font-display text-lg font-bold text-gray-900 mb-4">Related Products</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {related.slice(0,4).map(p => (
+                <Link key={p.id} to={`/buyer/products/${p.id}`} className="card-hover overflow-hidden">
                   <div className="aspect-square bg-gray-100 overflow-hidden rounded-t-2xl">
-                    <img src={np.image_url || np.image} alt={np.name} className="w-full h-full object-cover hover:scale-105 transition-transform duration-500"/>
+                    {p.image_url
+                      ? <img src={p.image_url} alt={p.name} className="w-full h-full object-cover hover:scale-105 transition-transform duration-500"/>
+                      : <div className="w-full h-full flex items-center justify-center text-4xl">🛍️</div>
+                    }
                   </div>
                   <div className="p-3">
-                    <p className="text-sm font-semibold text-gray-800 truncate">{np.name}</p>
-                    <p className="text-sm font-bold text-brand-600">₹{Number(np.price).toLocaleString('en-IN')}</p>
+                    <p className="text-sm font-semibold text-gray-800 truncate">{p.name}</p>
+                    <p className="text-sm font-bold text-brand-600">₹{Number(p.price).toLocaleString('en-IN')}</p>
                   </div>
                 </Link>
-              )
-            })}
+              ))}
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   )
 }
