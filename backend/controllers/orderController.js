@@ -60,6 +60,23 @@ exports.createOrder = async (req, res) => {
     }
 
     const orderId = result.insertId
+
+    // Also store normalized order items (optional but recommended)
+    // If the table doesn't exist yet in someone's local DB, we don't want
+    // to fail the whole checkout.
+    for (const item of safeItems) {
+      const productId = Number(item.id)
+      if (!productId) continue
+      try {
+        await pool.execute(
+          'INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)',
+          [orderId, productId, Number(item.qty) || 1, Number(item.price) || 0]
+        )
+      } catch (e) {
+        // ignore (keeps backward-compat if schema.sql wasn't applied)
+      }
+    }
+
     const productNames = safeItems.map(i => i.name).join(', ')
 
     // Notify buyer

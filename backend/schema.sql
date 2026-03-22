@@ -3,11 +3,11 @@
 -- Run:  mysql -u root -p < schema.sql
 -- ================================================================
 
-CREATE DATABASE IF NOT EXISTS vivmart
+CREATE DATABASE IF NOT EXISTS `vivmart ssgmc db`
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 
-USE vivmart;
+USE `vivmart ssgmc db`;
 
 -- ── Users (buyer | seller | admin) ───────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS products (
   name           VARCHAR(200)  NOT NULL,
   category       VARCHAR(50)   NOT NULL,
   ar_mode        ENUM('body','face','room','3d','shoes') DEFAULT '3d',
+  ar_overlay     VARCHAR(500)  NULL,
+  color          VARCHAR(40)   NULL,
   price          DECIMAL(12,2) NOT NULL,
   original_price DECIMAL(12,2),
   description    TEXT,
@@ -76,6 +78,22 @@ CREATE TABLE IF NOT EXISTS orders (
   FOREIGN KEY (buyer_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- ── Order Items (normalized order line items) ────────────────────
+-- Keeps compatibility with existing JSON `orders.items` while also
+-- storing proper order->product relations.
+CREATE TABLE IF NOT EXISTS order_items (
+  id         INT           AUTO_INCREMENT PRIMARY KEY,
+  order_id   INT           NOT NULL,
+  product_id INT           NOT NULL,
+  quantity   INT           NOT NULL DEFAULT 1,
+  price      DECIMAL(10,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_order   (order_id),
+  INDEX idx_product (product_id),
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
+);
+
 -- ── Live Sessions ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS live_sessions (
   id          INT          AUTO_INCREMENT PRIMARY KEY,
@@ -114,6 +132,7 @@ CREATE TABLE IF NOT EXISTS reviews (
   comment    TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY unique_review (product_id, user_id),
+  INDEX idx_product (product_id),
   FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE
 );
@@ -125,8 +144,24 @@ CREATE TABLE IF NOT EXISTS wishlist (
   product_id INT       NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY unique_wish (user_id, product_id),
+  INDEX idx_user (user_id),
   FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE,
   FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+);
+
+-- ── Notifications ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS notifications (
+  id         INT AUTO_INCREMENT PRIMARY KEY,
+  user_id    INT NOT NULL,
+  type       VARCHAR(50) NOT NULL,
+  title      VARCHAR(200) NOT NULL,
+  message    TEXT,
+  data       JSON,
+  is_read    BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user (user_id),
+  INDEX idx_user_read (user_id, is_read),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- ================================================================
@@ -135,10 +170,15 @@ CREATE TABLE IF NOT EXISTS wishlist (
 
 -- Default admin + demo accounts (password: demo1234 for all)
 -- bcrypt hash of 'demo1234' with 12 rounds:
-INSERT IGNORE INTO users (name, email, password, role, status) VALUES
+INSERT INTO users (name, email, password, role, status) VALUES
 ('Admin User',   'admin@vivmart.com',  '$2a$12$LiGRNfMaFHX1I5z.JyRK.OKC4lHzl1UdG3F2M0Hs6VpXQ0VWGKN22', 'admin',  'active'),
 ('Demo Seller',  'seller@vivmart.com', '$2a$12$LiGRNfMaFHX1I5z.JyRK.OKC4lHzl1UdG3F2M0Hs6VpXQ0VWGKN22', 'seller', 'active'),
-('Demo Buyer',   'buyer@vivmart.com',  '$2a$12$LiGRNfMaFHX1I5z.JyRK.OKC4lHzl1UdG3F2M0Hs6VpXQ0VWGKN22', 'buyer',  'active');
+('Demo Buyer',   'buyer@vivmart.com',  '$2a$12$LiGRNfMaFHX1I5z.JyRK.OKC4lHzl1UdG3F2M0Hs6VpXQ0VWGKN22', 'buyer',  'active')
+ON DUPLICATE KEY UPDATE
+  name     = VALUES(name),
+  password = VALUES(password),
+  role     = VALUES(role),
+  status   = VALUES(status);
 
 -- No demo products seeded — sellers add their own products via the dashboard
 

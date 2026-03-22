@@ -1,11 +1,11 @@
 import React, { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ShoppingCart, Sparkles, Star, Heart } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ShoppingCart, Star, Heart } from 'lucide-react'
 import { useCart } from '../../context/CartContext'
+import ARTryOnButton from '../ar/ARTryOnButton'
 
 export default function ProductCard({ product, basePath = '/buyer' }) {
   const { addItem } = useCart()
-  const navigate    = useNavigate()
   const [wished, setWished]     = useState(false)
   const [added, setAdded]       = useState(false)
   const [imgFailed, setImgFailed] = useState(false)
@@ -27,12 +27,6 @@ export default function ProductCard({ product, basePath = '/buyer' }) {
   const handleWish = e => {
     e.preventDefault(); e.stopPropagation()
     setWished(v => !v)
-  }
-
-  // Fix: use button + navigate instead of nested <Link>
-  const handleAR = e => {
-    e.preventDefault(); e.stopPropagation()
-    navigate(`${basePath}/ar/${product.id}`)
   }
 
   return (
@@ -61,13 +55,8 @@ export default function ProductCard({ product, basePath = '/buyer' }) {
           <Heart size={13} className={wished ? 'fill-red-500 text-red-500' : 'text-gray-500'}/>
         </button>
 
-        {/* AR button — button not Link, fixes nested <a> warning */}
-        <div className="absolute bottom-2 left-2 right-2 opacity-0 hover:opacity-100 translate-y-1 hover:translate-y-0 transition-all duration-300">
-          <button onClick={handleAR}
-            className="flex items-center justify-center gap-1.5 w-full bg-white/90 text-brand-600 text-xs font-bold py-1.5 rounded-full shadow hover:bg-white transition-all">
-            <Sparkles size={11}/> Try AR
-          </button>
-        </div>
+        {/* AR Try-On button (auto-hides for unsupported categories) */}
+        <ARTryOnButton product={product} variant="card" />
       </div>
 
       <div className="p-3">

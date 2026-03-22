@@ -3,6 +3,8 @@ const express    = require('express')
 const cors       = require('cors')
 const http       = require('http')
 const { Server } = require('socket.io')
+const bcrypt     = require('bcryptjs')
+const path       = require('path')
 
 // Routes
 const authRoutes     = require('./routes/auth')
@@ -12,9 +14,26 @@ const userRoutes     = require('./routes/users')
 const liveRoutes     = require('./routes/live')
 const videoCallRoutes  = require('./routes/videocalls')
 const notificationRoutes = require('./routes/notifications')
+const arOverlay = require('./routes/arOverlay')
 
 // Database
 const { getPool } = require('./config/db')
+
+const isProd = (process.env.NODE_ENV || 'development') === 'production'
+
+// In development, Vite may auto-pick a different port (5174, 5175, ...).
+// If we hard-code 5173, the browser will block API calls with a CORS error.
+const devLocalhostOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/
+const corsOrigin = (origin, cb) => {
+  // Allow non-browser clients (no Origin header)
+  if (!origin) return cb(null, true)
+
+  const envOrigin = process.env.FRONTEND_URL
+  if (envOrigin && origin === envOrigin) return cb(null, true)
+  if (!isProd && devLocalhostOrigin.test(origin)) return cb(null, true)
+
+  return cb(new Error('Not allowed by CORS'))
+}
 
 const app    = express()
 const server = http.createServer(app)
@@ -26,6 +45,45 @@ getPool().getConnection()
   .then(conn => {
     console.log('✅ MySQL connected successfully')
     conn.release()
+
+    // Dev convenience: ensure demo accounts match the documented password.
+    // This avoids confusing "correct credentials" login failures when the DB was seeded with a different hash.
+    if ((process.env.NODE_ENV || 'development') !== 'production') {
+      ;(async () => {
+        try {
+          const pool = getPool()
+          const demoPassword = 'demo1234'
+          const demoUsers = [
+            { name: 'Admin User', email: 'admin@vivmart.com', role: 'admin', status: 'active' },
+            { name: 'Demo Seller', email: 'seller@vivmart.com', role: 'seller', status: 'active' },
+            { name: 'Demo Buyer', email: 'buyer@vivmart.com', role: 'buyer', status: 'active' },
+          ]
+
+          const newHash = await bcrypt.hash(demoPassword, 12)
+
+          for (const u of demoUsers) {
+            const [rows] = await pool.execute('SELECT id, password FROM users WHERE email = ? LIMIT 1', [u.email])
+            if (!rows.length) {
+              await pool.execute(
+                'INSERT INTO users (name, email, password, role, status) VALUES (?, ?, ?, ?, ?)',
+                [u.name, u.email, newHash, u.role, u.status]
+              )
+              continue
+            }
+
+            const dbUser = rows[0]
+            const ok = await bcrypt.compare(demoPassword, dbUser.password || '')
+            if (!ok) {
+              await pool.execute('UPDATE users SET password = ? WHERE id = ?', [newHash, dbUser.id])
+            }
+          }
+
+          console.log('🧪 Demo users ready (password: demo1234)')
+        } catch (e) {
+          console.warn('Demo user sync skipped:', e.message)
+        }
+      })()
+    }
   })
   .catch(err => {
     console.error('❌ MySQL connection failed:', err.message)
@@ -37,7 +95,7 @@ getPool().getConnection()
 ───────────────────────────────────────────────────────────── */
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: corsOrigin,
     methods: ['GET', 'POST'],
     credentials: true,
   }
@@ -195,11 +253,14 @@ io.on('connection', (socket) => {
 ───────────────────────────────────────────────────────────── */
 app.set('io', io)
 app.use(cors({
-  origin:      process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin:      corsOrigin,
   credentials: true,
 }))
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ extended: true, limit: '50mb' }))
+
+// Serve uploaded overlay images
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 
 // Request logger in dev mode
 if (process.env.NODE_ENV !== 'production') {
@@ -219,6 +280,7 @@ app.use('/api/users',    userRoutes)
 app.use('/api/live',     liveRoutes)
 app.use('/api/videocalls',    videoCallRoutes)
 app.use('/api/notifications', notificationRoutes)
+app.use('/api/ar',       arOverlay)
 
 /* ─── Health check ─────────────────────────────────────────── */
 app.get('/api/health', (_req, res) =>

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Sparkles, Info } from 'lucide-react'
-import { BodyTryOn, FaceTryOn, RoomPlacement, ProductViewer3D } from '../../components/ar/ARComponents'
+import ARTryOnAdvanced from '../../components/ar/ARTryOnAdvanced'
 import api from '../../api'
 
 const AR_INFO = {
@@ -20,6 +20,19 @@ export default function BuyerARTryOn() {
   const [arActive, setArActive] = useState(false)
   const [products, setProducts] = useState([])
 
+  const resolveBackendAssetUrl = (maybeUrl) => {
+    if (!maybeUrl) return ''
+    const s = String(maybeUrl)
+    if (/^(https?:)?\/\//i.test(s) || /^data:/i.test(s) || /^blob:/i.test(s)) return s
+
+    const apiBase = String(api?.defaults?.baseURL || '').replace(/\/+$/, '')
+    const backendOrigin = apiBase.replace(/\/api$/i, '')
+    if (!backendOrigin) return s
+
+    if (s.startsWith('/')) return `${backendOrigin}${s}`
+    return `${backendOrigin}/${s}`
+  }
+
   useEffect(() => {
     setLoading(true)
     api.get(`/products/${id}`)
@@ -35,12 +48,26 @@ export default function BuyerARTryOn() {
 
   const renderAR = () => {
     if (!product) return null
-    const mode = product.ar_mode
-    const props = { product, onClose: () => setArActive(false) }
-    if (mode === 'body' || mode === 'shoes') return <BodyTryOn {...props}/>
-    if (mode === 'face') return <FaceTryOn {...props}/>
-    if (mode === 'room') return <RoomPlacement {...props}/>
-    return <ProductViewer3D {...props}/>
+
+    const initialMode =
+      product.ar_mode === 'face'
+        ? 'glasses'
+        : product.ar_mode === 'body' || product.ar_mode === 'shoes'
+          ? 'clothes'
+          : 'clothes'
+
+    const overlaySrc = resolveBackendAssetUrl(product.ar_overlay)
+
+    return (
+      <div className="space-y-3">
+        <div className="flex justify-end">
+          <button onClick={() => setArActive(false)} className="btn-outline text-sm">
+            Close
+          </button>
+        </div>
+        <ARTryOnAdvanced initialMode={initialMode} {...(overlaySrc ? { tshirtSrc: overlaySrc } : {})} />
+      </div>
+    )
   }
 
   if (loading) return (

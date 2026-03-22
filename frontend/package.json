@@ -9,6 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mediapipe/face_mesh": "^0.4.1633559619",
+    "@mediapipe/pose": "^0.5.1675469404",
+    "@mediapipe/selfie_segmentation": "^0.1.1675465747",
     "agora-rtc-sdk-ng": "^4.24.3",
     "axios": "^1.13.6",
     "jwt-decode": "^4.0.0",
@@ -20,6 +23,7 @@
     "three": "^0.161.0"
   },
   "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.2.0",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.17",
     "postcss": "^8.4.35",

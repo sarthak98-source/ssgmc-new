@@ -4,7 +4,7 @@ import { ShoppingBag, Mail, Lock, Eye, EyeOff, ShoppingCart, Store } from 'lucid
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { login, logout } = useAuth()
   const navigate = useNavigate()
   const [activeRole, setActiveRole] = useState('buyer')
   const [form, setForm] = useState({ email: '', password: '' })
@@ -20,6 +20,8 @@ export default function LoginPage() {
       const user = await login(form.email, form.password)
       // Validate role matches selected tab
       if (user.role !== activeRole && user.role !== 'admin') {
+        // Don't keep a token/user saved if role-tab doesn't match.
+        logout()
         setError(`This account is a ${user.role} account. Please use the ${user.role} login tab.`)
         setLoading(false); return
       }

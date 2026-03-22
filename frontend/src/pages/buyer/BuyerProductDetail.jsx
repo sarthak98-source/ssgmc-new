@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ShoppingCart, Sparkles, Star, ArrowLeft, Package, Truck, Shield, Heart, Video, X, Phone } from 'lucide-react'
+import { ShoppingCart, Star, ArrowLeft, Package, Truck, Shield, Heart, Video, X, Phone } from 'lucide-react'
 import { useCart } from '../../context/CartContext'
 import { useAuth } from '../../context/AuthContext'
 import { io } from 'socket.io-client'
 import api from '../../api'
 import VideoCallModal from '../../components/videocall/VideoCallModal'
+import ARTryOnButton from '../../components/ar/ARTryOnButton'
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000'
 
@@ -189,10 +190,6 @@ export default function BuyerProductDetail() {
                 <Heart size={16} className={wished ? 'fill-red-500 text-red-500' : 'text-gray-400'}/>
               </button>
             </div>
-            <Link to={`/buyer/ar/${product.id}`} className="w-full btn-secondary justify-center py-3 text-base font-bold gap-2">
-              <Sparkles size={18} className="text-brand-500"/> Try with AR
-              <span className="badge-orange text-xs">{product.ar_mode?.toUpperCase()}</span>
-            </Link>
           </div>
 
           {/* Details */}
@@ -251,6 +248,7 @@ export default function BuyerProductDetail() {
                 className={`flex-1 btn-primary justify-center py-3 text-base transition-all ${added?'bg-green-500 hover:bg-green-500':''}`}>
                 <ShoppingCart size={18}/> {added ? '✓ Added!' : 'Add to Cart'}
               </button>
+              <ARTryOnButton product={product} variant="page" />
             </div>
 
             {/* ── Video Call Request Button ── */}

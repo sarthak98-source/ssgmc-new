@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Product Skeleton Annotator — VivMart AR</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; display: flex; height: 100vh; }
+
+  #sidebar {
+    width: 260px; min-width: 260px; background: #1a1a1a; border-right: 1px solid #333;
+    display: flex; flex-direction: column; padding: 16px; gap: 12px; overflow-y: auto;
+  }
+  #sidebar h2 { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 4px; }
+  #sidebar p  { font-size: 11px; color: #888; line-height: 1.5; }
+
+  .keypoint-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 8px; cursor: pointer;
+    border: 1px solid transparent; transition: border-color 0.15s;
+    font-size: 12px;
+  }
+  .keypoint-row:hover        { border-color: #555; }
+  .keypoint-row.active       { border-color: #F9CB42; background: rgba(249,203,66,0.08); color: #F9CB42; }
+  .keypoint-row.placed       { color: #5DCAA5; }
+  .keypoint-row .dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    border: 1.5px solid currentColor;
+  }
+  .keypoint-row.placed .dot  { background: #5DCAA5; border-color: #5DCAA5; }
+  .keypoint-row.active .dot  { background: #F9CB42; border-color: #F9CB42; }
+
+  #canvas-area { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
+  #main-canvas { cursor: crosshair; max-width: 100%; max-height: 100%; display: block; }
+
+  #output-area {
+    position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+    background: #1a1a1a; border: 1px solid #333; border-radius: 10px;
+    padding: 12px 16px; min-width: 340px; max-width: 600px;
+  }
+  #output-area h3   { font-size: 12px; color: #888; margin-bottom: 6px; }
+  #output-code      { font-family: monospace; font-size: 11px; color: #a0e0c0; white-space: pre; overflow-x: auto; }
+
+  button {
+    padding: 7px 16px; border-radius: 8px; border: none; cursor: pointer;
+    font-size: 12px; font-weight: 500;
+  }
+  .btn-primary { background: #F9CB42; color: #000; }
+  .btn-outline { background: transparent; border: 1px solid #444; color: #ccc; }
+  .btn-danger  { background: transparent; border: 1px solid #c04; color: #f66; }
+
+  #file-drop {
+    border: 2px dashed #444; border-radius: 12px; padding: 24px;
+    text-align: center; font-size: 13px; color: #666; cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  #file-drop:hover, #file-drop.dragover { border-color: #F9CB42; color: #F9CB42; }
+
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div>
+    <h2>Product Skeleton Annotator</h2>
+    <p>Open a product image, click a keypoint name, then click on the image to place it.</p>
+  </div>
+
+  <div id="file-drop" onclick="document.getElementById('file-input').click()"
+       ondragover="event.preventDefault();this.classList.add('dragover')"
+       ondragleave="this.classList.remove('dragover')"
+       ondrop="handleDrop(event)">
+    Drop / click to load image
+    <input type="file" id="file-input" accept="image/*" style="display:none" onchange="loadFile(event)">
+  </div>
+
+  <div style="font-size:11px;color:#666;padding:2px 0">— click a keypoint to place it —</div>
+
+  <div id="keypoint-list"></div>
+
+  <div class="actions" style="margin-top:4px">
+    <button class="btn-outline" onclick="clearAll()">Clear all</button>
+    <button class="btn-danger"  onclick="removeLast()">Undo last</button>
+    <button class="btn-primary" onclick="copyOutput()">Copy JS</button>
+  </div>
+</div>
+
+<div id="canvas-area">
+  <canvas id="main-canvas"></canvas>
+  <div id="output-area" style="display:none">
+    <h3>Paste into productSkeleton.js → PRODUCT_SKELETONS:</h3>
+    <pre id="output-code"></pre>
+  </div>
+</div>
+
+<script>
+const KEYPOINTS = [
+  { key: 'neck',          label: 'Neck / collar centre',    required: false },
+  { key: 'leftShoulder',  label: 'Left shoulder top',       required: true  },
+  { key: 'rightShoulder', label: 'Right shoulder top',      required: true  },
+  { key: 'leftElbow',     label: 'Left elbow (sleeve mid)', required: false },
+  { key: 'rightElbow',    label: 'Right elbow',             required: false },
+  { key: 'leftWrist',     label: 'Left wrist / cuff',       required: false },
+  { key: 'rightWrist',    label: 'Right wrist / cuff',      required: false },
+  { key: 'leftHip',       label: 'Left hem corner',         required: true  },
+  { key: 'rightHip',      label: 'Right hem corner',        required: true  },
+  { key: 'centerTop',     label: 'Chest centre top',        required: false },
+  { key: 'centerBottom',  label: 'Hem centre',              required: false },
+];
+
+const canvas = document.getElementById('main-canvas');
+const ctx    = canvas.getContext('2d');
+let img      = null;
+let imgSrc   = '';
+let placed   = {};          // key → { x, y } normalised
+let activeKey = KEYPOINTS[0].key;
+let scale    = 1;
+
+// build sidebar
+const list = document.getElementById('keypoint-list');
+KEYPOINTS.forEach(kp => {
+  const row = document.createElement('div');
+  row.className = 'keypoint-row' + (kp.key === activeKey ? ' active' : '');
+  row.id = 'kp-' + kp.key;
+  row.innerHTML = `<div class="dot"></div><span>${kp.label}</span>` +
+    (kp.required ? ' <span style="color:#555;font-size:10px">*req</span>' : '');
+  row.onclick = () => setActive(kp.key);
+  list.appendChild(row);
+});
+
+function setActive(key) {
+  document.querySelectorAll('.keypoint-row').forEach(r => r.classList.remove('active'));
+  document.getElementById('kp-' + key)?.classList.add('active');
+  activeKey = key;
+}
+
+function loadFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  imgSrc = file.name;
+  const reader = new FileReader();
+  reader.onload = ev => loadImageSrc(ev.target.result);
+  reader.readAsDataURL(file);
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  imgSrc = file.name;
+  const reader = new FileReader();
+  reader.onload = ev => loadImageSrc(ev.target.result);
+  reader.readAsDataURL(file);
+}
+
+function loadImageSrc(src) {
+  const i = new Image();
+  i.onload = () => {
+    img = i;
+    placed = {};
+    sizeCanvas();
+    render();
+    updateOutput();
+  };
+  i.src = src;
+}
+
+function sizeCanvas() {
+  if (!img) return;
+  const area  = document.getElementById('canvas-area');
+  const maxW  = area.clientWidth  - 24;
+  const maxH  = area.clientHeight - 120;
+  scale       = Math.min(maxW / img.width, maxH / img.height, 2);
+  canvas.width  = img.width  * scale;
+  canvas.height = img.height * scale;
+}
+
+canvas.addEventListener('click', e => {
+  if (!img) return;
+  const rect = canvas.getBoundingClientRect();
+  const cx   = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const cy   = (e.clientY - rect.top)  * (canvas.height / rect.height);
+  placed[activeKey] = { x: +(cx / canvas.width).toFixed(4), y: +(cy / canvas.height).toFixed(4) };
+
+  const idx = KEYPOINTS.findIndex(k => k.key === activeKey);
+  const next = KEYPOINTS.slice(idx + 1).find(k => !placed[k.key]);
+  if (next) setActive(next.key);
+
+  render();
+  updateOutput();
+});
+
+const COLORS = {
+  neck: '#5DCAA5', centerTop: '#85B7EB', centerBottom: '#85B7EB',
+  leftShoulder: '#F9CB42', rightShoulder: '#F9CB42',
+  leftHip: '#F9CB42', rightHip: '#F9CB42',
+  leftElbow: '#EF8B2C', rightElbow: '#EF8B2C',
+  leftWrist: '#EF8B2C', rightWrist: '#EF8B2C',
+};
+
+const BONES = [
+  ['neck','leftShoulder'],['neck','rightShoulder'],
+  ['leftShoulder','rightShoulder'],
+  ['leftShoulder','leftElbow'],['leftElbow','leftWrist'],
+  ['rightShoulder','rightElbow'],['rightElbow','rightWrist'],
+  ['leftShoulder','leftHip'],['rightShoulder','rightHip'],
+  ['leftHip','rightHip'],
+  ['centerTop','centerBottom'],
+];
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!img) return;
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  for (const [a, b] of BONES) {
+    if (!placed[a] || !placed[b]) continue;
+    ctx.beginPath();
+    ctx.moveTo(placed[a].x * canvas.width, placed[a].y * canvas.height);
+    ctx.lineTo(placed[b].x * canvas.width, placed[b].y * canvas.height);
+    ctx.stroke();
+  }
+
+  for (const [key, pt] of Object.entries(placed)) {
+    const px = pt.x * canvas.width;
+    const py = pt.y * canvas.height;
+    ctx.beginPath();
+    ctx.arc(px, py, 7, 0, Math.PI * 2);
+    ctx.fillStyle = COLORS[key] ?? '#fff';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 11px system-ui';
+    ctx.fillText(key, px + 10, py + 4);
+  }
+
+  KEYPOINTS.forEach(kp => {
+    const row = document.getElementById('kp-' + kp.key);
+    if (!row) return;
+    if (placed[kp.key]) row.classList.add('placed');
+    else row.classList.remove('placed');
+  });
+}
+
+function updateOutput() {
+  const area = document.getElementById('output-area');
+  const code = document.getElementById('output-code');
+  if (Object.keys(placed).length === 0) { area.style.display = 'none'; return; }
+
+  area.style.display = 'block';
+  const key = imgSrc ? `'/${imgSrc}'` : `'/your-product.png'`;
+  const lines = [
+    `${key}: {`,
+    ...Object.entries(placed).map(([k, v]) => `  ${k.padEnd(16)}: { x: ${v.x}, y: ${v.y} },`),
+    `},`,
+  ];
+  code.textContent = lines.join('\n');
+}
+
+function copyOutput() {
+  const text = document.getElementById('output-code').textContent;
+  navigator.clipboard.writeText(text).then(() => alert('Copied! Paste into PRODUCT_SKELETONS in productSkeleton.js'));
+}
+
+function clearAll() { placed = {}; render(); updateOutput(); }
+function removeLast() {
+  const keys = Object.keys(placed);
+  if (keys.length) { delete placed[keys[keys.length - 1]]; render(); updateOutput(); }
+}
+
+window.addEventListener('resize', () => { sizeCanvas(); render(); });
+</script>
+</body>
+</html>
